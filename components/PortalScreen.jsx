@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback,useEffect,useMemo,useState } from "react";
+import { useCallback,useEffect,useId,useMemo,useRef,useState } from "react";
 import Link from "next/link";
 import ThemeControl from "@/components/ThemeControl";
 import { CREDIT_DISCLAIMER } from "@/lib/credits";
 import { createAuthClient } from "@neon/auth/next";
 import { usePathname,useRouter } from "next/navigation";
-import { motion } from "motion/react";
+import { AnimatePresence,motion,useReducedMotion } from "motion/react";
 import { Activity,ArrowDownLeft,ArrowLeftRight,ArrowRight,ArrowUpRight,Award,BookOpen,Brain,BriefcaseBusiness,Check,CheckCheck,CheckCircle2,ChevronDown,Clock3,Compass,Crown,Eye,GraduationCap,HandHeart,LayoutDashboard,Lightbulb,LogOut,Medal,Menu,MessageSquareText,Plus,Search,Settings,ShieldCheck,SlidersHorizontal,Sparkles,Star,Tags,Trash2,Trophy,Users,UserRound,X,Bell } from "lucide-react";
 
 const titleMap={"/dashboard":"Dashboard","/credits":"SkillSwap Credits","/leaderboard":"Student Leaderboard","/pending":"Account review","/explore":"Explore skills","/my-skills":"My skills","/swap-requests":"Swap requests","/my-exchanges":"My exchanges","/notifications":"Notifications","/profile":"My profile","/settings":"Settings","/admin":"Admin dashboard","/admin/credits":"Credit management","/admin/users":"Student management","/admin/skills":"Skill management","/admin/categories":"Categories","/admin/swaps":"Swap activity"};
@@ -18,47 +18,103 @@ const nice=(s="")=>s.charAt(0).toUpperCase()+s.slice(1);
 const initials=(s="Student")=>s.split(/\s+/).map(v=>v[0]).slice(0,2).join("").toUpperCase();
 function Empty({icon:Icon=Sparkles,title,copy,action}){return <div className="empty-state"><span className="empty-icon"><Icon size={21}/></span><h3>{title}</h3><p>{copy}</p>{action}</div>}
 function Status({value}){return <span className={`status-pill ${String(value).toLowerCase()}`}>{nice(value)}</span>}
+function PortalSkeleton({label}){return <div className="portal-skeleton" role="status" aria-label={`Loading ${label}`}><span className="sr-only">Loading {label}…</span><div className="skeleton-heading"><i/><i/></div><div className="skeleton-stat-row" aria-hidden="true">{Array.from({length:4},(_,index)=><i key={index}/>)}</div><div className="skeleton-panel" aria-hidden="true"><i/><i/><i/><i/></div></div>}
 
 export default function PortalScreen({studentId}){
- const path=usePathname(),router=useRouter(),[me,setMe]=useState(null),[data,setData]=useState({}),[loading,setLoading]=useState(true),[error,setError]=useState(""),[notice,setNotice]=useState(""),[mobile,setMobile]=useState(false),[filter,setFilter]=useState({q:"",category:"",level:"",department:"",year:"",rating:""}),[tab,setTab]=useState("all"),[modal,setModal]=useState(null),[busy,setBusy]=useState(false),[leaderboardScope,setLeaderboardScope]=useState("real"),[leaderboardFilter,setLeaderboardFilter]=useState("overall"),[leaderboardDepartment,setLeaderboardDepartment]=useState(""),[adminCreditScope,setAdminCreditScope]=useState("all");
+ const path=usePathname(),router=useRouter(),[me,setMe]=useState(null),[data,setData]=useState({}),[loading,setLoading]=useState(true),[refreshing,setRefreshing]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState(""),[mobile,setMobile]=useState(false),[filter,setFilter]=useState({q:"",category:"",level:"",department:"",year:"",rating:""}),[tab,setTab]=useState("all"),[modal,setModal]=useState(null),[busy,setBusy]=useState(false),[leaderboardScope,setLeaderboardScope]=useState("real"),[leaderboardFilter,setLeaderboardFilter]=useState("overall"),[leaderboardDepartment,setLeaderboardDepartment]=useState(""),[adminCreditScope,setAdminCreditScope]=useState("all");
+ const reduceMotion=useReducedMotion()===true,sidebarRef=useRef(null),menuButtonRef=useRef(null),mainRef=useRef(null),loadSequence=useRef(0),loadedPath=useRef(null);
  const isAdmin=me?.role==="admin",limited=me?.role==="student"&&["pending","rejected"].includes(me.account_status),nav=isAdmin?adminNav:limited?[["/pending","Account status",ShieldCheck],["/explore","Explore skills",Compass],["/profile","My profile",UserRound],["/notifications","Notifications",Bell],["/settings","Settings",Settings]]:studentNav,title=path.startsWith("/students/")?"Student profile":titleMap[path]||"SkillSwap";
  const load=useCallback(async()=>{
-  setLoading(true);setError("");try{const {user}=await request("/api/auth/me");setMe(user);
+  const sequence=++loadSequence.current;
+  const firstPageLoad=loadedPath.current!==path;
+  if(firstPageLoad){setLoading(true);setData({});}else setRefreshing(true);
+  setError("");
+  try{
+   const {user}=await request("/api/auth/me");
+   if(sequence!==loadSequence.current)return;
+   setMe(user);
+   let nextData=null;
    if(user.role==="admin"){
-    if(path==="/admin"){const [a,u]=await Promise.all([request("/api/admin/dashboard"),request("/api/admin/users?status=pending")]);setData({...a,pendingUsers:u.users});}
-    else if(path==="/notifications")setData(await request("/api/notifications"));
-    else if(path==="/admin/credits")setData(await request(`/api/admin/credits?scope=${adminCreditScope}`));
-    else if(path==="/admin/users")setData(await request("/api/admin/users"));
-    else if(path==="/admin/skills")setData(await request("/api/admin/skills"));
-    else if(path==="/admin/categories")setData(await request("/api/admin/categories"));
-    else if(path==="/admin/swaps")setData(await request("/api/admin/swaps"));
-   }else if(path==="/dashboard"){const [a,p,c]=await Promise.all([request("/api/dashboard"),request("/api/profile"),request("/api/credits")]);setData({...a,profile:p.profile,credits:c});}
-   else if(path==="/pending"){const [a,p,c]=await Promise.all([request("/api/dashboard"),request("/api/profile"),request("/api/support")]);setData({...a,profile:p.profile,contactEmail:c.contactEmail});}
-   else if(path==="/credits")setData(await request("/api/credits"));
-   else if(path==="/leaderboard")setData(await request(`/api/leaderboard?scope=${leaderboardScope}&filter=${leaderboardFilter}&department=${encodeURIComponent(leaderboardDepartment)}`));
-   else if(path==="/explore"){const [a,b]=await Promise.all([request(`/api/skills?${new URLSearchParams(Object.entries(filter).filter(([,v])=>v))}`),request("/api/swaps")]);setData({...a,mySkills:b.mySkills});}
-   else if(path==="/my-skills"){const [a,b]=await Promise.all([request("/api/skills/mine"),request("/api/categories")]);setData({...a,...b});}
-   else if(path==="/swap-requests"||path==="/my-exchanges")setData(await request("/api/swaps"));
-   else if(path==="/notifications")setData(await request("/api/notifications"));
-   else if(path==="/profile"){const [a,b,c]=await Promise.all([request("/api/profile"),request("/api/reviews"),request("/api/credits")]);setData({...a,...b,credits:c});}
-   else if(studentId)setData(await request(`/api/students/${studentId}`));
-  }catch(e){if(e.message==="Not signed in.")router.replace("/");else setError(e.message);}finally{setLoading(false);}
+    if(path==="/admin"){const [a,u]=await Promise.all([request("/api/admin/dashboard"),request("/api/admin/users?status=pending")]);nextData={...a,pendingUsers:u.users};}
+    else if(path==="/notifications")nextData=await request("/api/notifications");
+    else if(path==="/admin/credits")nextData=await request(`/api/admin/credits?scope=${adminCreditScope}`);
+    else if(path==="/admin/users")nextData=await request("/api/admin/users");
+    else if(path==="/admin/skills")nextData=await request("/api/admin/skills");
+    else if(path==="/admin/categories")nextData=await request("/api/admin/categories");
+    else if(path==="/admin/swaps")nextData=await request("/api/admin/swaps");
+   }else if(path==="/dashboard"){const [a,p,c]=await Promise.all([request("/api/dashboard"),request("/api/profile"),request("/api/credits")]);nextData={...a,profile:p.profile,credits:c};}
+   else if(path==="/pending"){const [a,p,c]=await Promise.all([request("/api/dashboard"),request("/api/profile"),request("/api/support")]);nextData={...a,profile:p.profile,contactEmail:c.contactEmail};}
+   else if(path==="/credits")nextData=await request("/api/credits");
+   else if(path==="/leaderboard")nextData=await request(`/api/leaderboard?scope=${leaderboardScope}&filter=${leaderboardFilter}&department=${encodeURIComponent(leaderboardDepartment)}`);
+   else if(path==="/explore"){const [a,b]=await Promise.all([request(`/api/skills?${new URLSearchParams(Object.entries(filter).filter(([,v])=>v))}`),request("/api/swaps")]);nextData={...a,mySkills:b.mySkills};}
+   else if(path==="/my-skills"){const [a,b]=await Promise.all([request("/api/skills/mine"),request("/api/categories")]);nextData={...a,...b};}
+   else if(path==="/swap-requests"||path==="/my-exchanges")nextData=await request("/api/swaps");
+   else if(path==="/notifications")nextData=await request("/api/notifications");
+   else if(path==="/profile"){const [a,b,c]=await Promise.all([request("/api/profile"),request("/api/reviews"),request("/api/credits")]);nextData={...a,...b,credits:c};}
+   else if(studentId)nextData=await request(`/api/students/${studentId}`);
+   if(sequence===loadSequence.current&&nextData!==null)setData(nextData);
+  }catch(e){if(sequence===loadSequence.current){if(e.message==="Not signed in.")router.replace("/");else setError(e.message);}}
+  finally{if(sequence===loadSequence.current){loadedPath.current=path;setLoading(false);setRefreshing(false);}}
  },[path,router,filter,studentId,leaderboardScope,leaderboardFilter,leaderboardDepartment,adminCreditScope]);
  // Start an async fetch when the route or search filters change.
  // eslint-disable-next-line react-hooks/set-state-in-effect
- useEffect(()=>{load();},[load]);
+ useEffect(()=>{load();return()=>{loadSequence.current+=1;};},[load]);
+ useEffect(()=>{
+  if(!mobile)return;
+  const drawer=sidebarRef.current;
+  const previousFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
+  const main=mainRef.current,mainWasInert=main?.hasAttribute("inert");
+  const focusables=()=>Array.from(drawer?.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')||[]).filter(element=>element.getAttribute("aria-hidden")!=="true");
+  const frame=requestAnimationFrame(()=>{(drawer?.querySelector(".side-nav a")||focusables()[0]||drawer)?.focus({preventScroll:true});});
+  const previousOverflow=document.body.style.overflow;
+  const previousRootOverflow=document.documentElement.style.overflow;
+  document.body.style.overflow="hidden";
+  document.documentElement.style.overflow="hidden";
+  main?.setAttribute("inert","");
+  function handleKeyDown(event){
+   if(event.key==="Escape"){event.preventDefault();setMobile(false);return;}
+   if(event.key!=="Tab")return;
+   const items=focusables();
+   if(!items.length){event.preventDefault();drawer?.focus();return;}
+   const first=items[0],last=items.at(-1);
+   if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+   else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+  }
+  document.addEventListener("keydown",handleKeyDown);
+  return()=>{
+   cancelAnimationFrame(frame);
+   document.removeEventListener("keydown",handleKeyDown);
+   document.body.style.overflow=previousOverflow;
+   document.documentElement.style.overflow=previousRootOverflow;
+   if(main&&!mainWasInert)main.removeAttribute("inert");
+   if(previousFocus?.isConnected)requestAnimationFrame(()=>previousFocus.focus({preventScroll:true}));
+  };
+ },[mobile]);
  useEffect(()=>{if(me?.role==="admin"&&!path.startsWith("/admin")&&!["/notifications","/settings"].includes(path))router.replace("/admin");if(me?.role==="student"&&path.startsWith("/admin"))router.replace(me.account_status==="approved"?"/dashboard":"/pending");if(me?.role==="student"&&me.account_status==="pending"&&!(["/pending","/explore","/profile","/notifications","/settings"].includes(path)))router.replace("/pending");if(me?.role==="student"&&me.account_status==="rejected"&&!(["/pending","/profile","/settings"].includes(path)))router.replace("/pending");},[me,path,router]);
  async function act(url,method="POST",body,success="Saved."){setBusy(true);setError("");setNotice("");try{await request(url,method,body);setNotice(success);setModal(null);await load();return true;}catch(e){setError(e.message);return false;}finally{setBusy(false);}}
  async function loadMoreCredits(){const offset=data.activity?.length||0;const next=await request(`/api/credits?offset=${offset}`);setData(current=>({...current,activity:[...(current.activity||[]),...next.activity],pagination:next.pagination}));}
  async function logout(){try{await authClient.signOut();setMe(null);setData({});router.replace("/");}catch(e){setError(e.message||"Could not end the current session.");}}
  const unread=data.unreadCount||0;
  return <div className="app-shell">
-  <aside className={`sidebar ${mobile?"open":""}`}><Link href={isAdmin?"/admin":"/dashboard"} className="brand"><span className="brand-mark"><ArrowLeftRight size={22}/></span><b>SkillSwap</b></Link><div className="side-label">{isAdmin?"ADMINISTRATION":"YOUR SPACE"}</div><nav className="side-nav">{nav.map(([href,label,Icon])=><Link key={href} href={href} onClick={()=>setMobile(false)} className={`side-link ${path===href?"active":""}`}><Icon size={18}/><span>{label}</span>{href==="/notifications"&&unread>0&&<i className="unread-dot">{unread}</i>}</Link>)}</nav><div className="sidebar-bottom"><div className="mini-profile"><div className="avatar">{initials(me?.full_name)}</div><div className="mini-person"><b title={isAdmin?me?.email:me?.full_name}>{isAdmin?(me?.email||"Loading account…"):(me?.full_name||"Loading…")}</b><span>{isAdmin?"Administrator":nice(me?.account_status||"student")}</span></div><ChevronDown size={15}/></div><button className="side-link logout-link" onClick={logout}><LogOut size={18}/><span>Sign out</span></button></div></aside>
-  {mobile&&<button className="mobile-scrim" aria-label="Close menu" onClick={()=>setMobile(false)}/>}
-  <main className="portal-main"><header className="portal-header"><button className="icon-button mobile-menu" onClick={()=>setMobile(!mobile)} aria-label="Toggle menu"><Menu size={19}/></button><div><span className="eyebrow">SKILLSWAP</span><h1>{title}</h1></div><div className="header-right"><ThemeControl/><Link className="header-notify" href="/notifications" aria-label="Notifications"><Bell size={19}/>{unread>0&&<i>{unread}</i>}</Link><div className={`header-person ${isAdmin?"admin":"student"}`} title={isAdmin?me?.email:me?.email}><div className="avatar small">{initials(me?.full_name)}</div><span className="header-identity"><b>{isAdmin?(me?.email||"Loading account…"):(me?.full_name?.split(" ")[0]||"Loading…")}</b>{!isAdmin&&<small>{me?.email}</small>}</span></div></div></header>
-   <section className="portal-content">{error&&<div className="notice error" role="alert">{error}</div>}{notice&&<div className="notice success" role="status"><CheckCircle2 size={17}/>{notice}</div>}{loading?<div className="loading-card"><span className="spinner dark"/> Loading your SkillSwap…</div>:renderContent()}</section>
-   <SkillModal modal={modal} data={data} onClose={()=>setModal(null)} onSubmit={async body=>{if(modal?.type==="request")await act("/api/swaps","POST",{requestedSkillId:modal.skill.id,offeredSkillId:body.offeredSkillId,message:body.message},"Swap request sent.");else if(modal?.type==="editSkill")await act(`/api/skills/${modal.skill.id}`,"PATCH",body,"Skill updated.");else await act("/api/skills","POST",body,"Skill saved.");}}/>
-  </main>
+  <aside ref={sidebarRef} id="skillswap-navigation" className={`sidebar ${mobile?"open":""}`} role={mobile?"dialog":undefined} aria-modal={mobile?"true":undefined} aria-label={mobile?`${isAdmin?"Administrator":"Student"} navigation`:undefined} tabIndex={-1}>
+   <Link href={isAdmin?"/admin":"/dashboard"} className="brand" onClick={()=>setMobile(false)}><span className="brand-mark"><ArrowLeftRight size={22}/></span><b>SkillSwap</b></Link>
+   <div className="side-label">{isAdmin?"ADMINISTRATION":"YOUR SPACE"}</div>
+   <nav className="side-nav" aria-label={isAdmin?"Admin sections":"Student sections"}>{nav.map(([href,label,Icon])=><Link key={href} href={href} onClick={()=>setMobile(false)} className={`side-link ${path===href?"active":""}`} aria-current={path===href?"page":undefined}><Icon size={18}/><span>{label}</span>{href==="/notifications"&&unread>0&&<i className="unread-dot">{unread}</i>}</Link>)}</nav>
+   <div className="sidebar-bottom"><div className="mini-profile"><div className="avatar">{initials(me?.full_name)}</div><div className="mini-person"><b title={isAdmin?me?.email:me?.full_name}>{isAdmin?(me?.email||"Loading account…"):(me?.full_name||"Loading…")}</b><span>{isAdmin?"Administrator":nice(me?.account_status||"student")}</span></div><ChevronDown size={15}/></div><button className="side-link logout-link" onClick={logout}><LogOut size={18}/><span>Sign out</span></button></div>
+  </aside>
+  <AnimatePresence initial={false}>{mobile&&<motion.button key="mobile-navigation-backdrop" type="button" className="mobile-scrim" aria-label="Close navigation menu" onClick={()=>setMobile(false)} initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:reduceMotion?0.12:0.26,ease:[0.16,1,0.3,1]}}/>}</AnimatePresence>
+  <motion.main ref={mainRef} className="portal-main" initial={{opacity:0,x:reduceMotion?0:16}} animate={{opacity:1,x:0}} transition={{duration:reduceMotion?0.12:0.24,ease:[0.16,1,0.3,1]}}><header className="portal-header"><button ref={menuButtonRef} className="icon-button mobile-menu" onClick={()=>setMobile(value=>!value)} aria-label={mobile?"Close navigation menu":"Open navigation menu"} aria-expanded={mobile} aria-controls="skillswap-navigation"><Menu size={19}/></button><div><span className="eyebrow">SKILLSWAP</span><h1>{title}</h1></div><div className="header-right"><ThemeControl/><Link className="header-notify" href="/notifications" aria-label="Notifications"><Bell size={19}/>{unread>0&&<i>{unread}</i>}</Link><div className={`header-person ${isAdmin?"admin":"student"}`} title={isAdmin?me?.email:me?.email}><div className="avatar small">{initials(me?.full_name)}</div><span className="header-identity"><b>{isAdmin?(me?.email||"Loading account…"):(me?.full_name?.split(" ")[0]||"Loading…")}</b>{!isAdmin&&<small>{me?.email}</small>}</span></div></div></header>
+   <section className="portal-content" aria-busy={loading||refreshing}>
+    <AnimatePresence initial={false}>
+     {error&&<motion.div key="portal-error" className="notice error" role="alert" initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}} transition={{duration:reduceMotion?0.12:0.2,ease:[0.16,1,0.3,1]}}>{error}</motion.div>}
+     {notice&&<motion.div key="portal-notice" className="notice success" role="status" initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}} transition={{duration:reduceMotion?0.12:0.2,ease:[0.16,1,0.3,1]}}><CheckCircle2 size={17}/>{notice}</motion.div>}
+    </AnimatePresence>
+    <AnimatePresence initial={false} mode="wait">
+     {loading?<motion.div key={`portal-loading-${path}`} className="portal-content-transition" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:reduceMotion?0.12:0.18}}><PortalSkeleton label={title}/></motion.div>:<motion.div key={`portal-content-${path}`} className="portal-content-transition" initial={{opacity:0,y:reduceMotion?0:7}} animate={{opacity:1,y:0}} exit={{opacity:0,y:reduceMotion?0:-4}} transition={{duration:reduceMotion?0.12:0.2,ease:[0.16,1,0.3,1]}}>{renderContent()}</motion.div>}
+    </AnimatePresence>
+   </section>
+  </motion.main>
+  <SkillModal modal={modal} data={data} onClose={()=>setModal(null)} onSubmit={async body=>{if(modal?.type==="request")await act("/api/swaps","POST",{requestedSkillId:modal.skill.id,offeredSkillId:body.offeredSkillId,message:body.message},"Swap request sent.");else if(modal?.type==="editSkill")await act(`/api/skills/${modal.skill.id}`,"PATCH",body,"Skill updated.");else await act("/api/skills","POST",body,"Skill saved.");}}/>
  </div>;
 
  function renderContent(){
@@ -136,13 +192,24 @@ function Explore({me,data,filter,setFilter,onRequest}){const f=(k,v)=>setFilter(
 function MySkills({data,onAdd,onEdit,onDelete,onToggle}){const offered=(data.skills||[]).filter(x=>x.skill_type==="offered"),wanted=(data.skills||[]).filter(x=>x.skill_type==="wanted");return <><div className="page-intro"><div><span className="eyebrow">YOUR SKILL PROFILE</span><h2>What can you teach?</h2><p>Add skills you can teach and skills you’d like to learn.</p></div></div><div className="skill-tabs"><section className="owned-skill-section"><div className="section-heading compact"><div><span className="eyebrow">SHARE WHAT YOU KNOW</span><h2>Skills I can teach <small>{offered.length}</small></h2></div><button className="primary-button small-button" onClick={()=>onAdd("offered")}><Plus size={16}/> Add skill</button></div>{offered.length?<div className="owned-list">{offered.map(s=><SkillRow key={s.id} skill={s} onEdit={onEdit} onDelete={onDelete} onToggle={onToggle}/>)}</div>:<Empty title="No teaching skills yet" copy="Share your strengths so others can learn from you."/>}</section><section className="owned-skill-section"><div className="section-heading compact"><div><span className="eyebrow">GROW SOMETHING NEW</span><h2>Skills I want to learn <small>{wanted.length}</small></h2></div><button className="secondary-button small-button" onClick={()=>onAdd("wanted")}><Plus size={16}/> Add skill</button></div>{wanted.length?<div className="owned-list">{wanted.map(s=><SkillRow key={s.id} skill={s} onEdit={onEdit} onDelete={onDelete} onToggle={onToggle}/>)}</div>:<Empty title="Add a learning goal" copy="Choose a skill you’d love to learn from another student."/>}</section></div></>;}
 function SkillRow({skill,onEdit,onDelete,onToggle}){return <div className={`owned-row ${!skill.is_active?"inactive":""}`}><span className="owned-icon"><BookOpen size={17}/></span><span className="owned-detail"><b>{skill.name}</b><small>{skill.category||"Other"} · {nice(skill.level)} {skill.is_active?"":"· Hidden from discovery"}</small></span><button className="icon-button" title="Edit skill" onClick={()=>onEdit(skill)}><SlidersHorizontal size={16}/></button><button className="icon-button" title={skill.is_active?"Deactivate":"Activate"} onClick={()=>onToggle(skill)}><Eye size={17}/></button><button className="icon-button danger-icon" title="Remove skill" onClick={()=>window.confirm(`Remove ${skill.name}?`)&&onDelete(skill.id)}><Trash2 size={17}/></button></div>;}
 
-function Swaps({data,me,page,tab,setTab,onAction}){const all=data.swaps||[],tabs=[["all","All"],["pending","Pending"],["accepted","Accepted"],["completed","Completed"],["closed","Rejected / Cancelled"]],visible=all.filter(s=>tab==="all"||s.status===tab||(tab==="closed"&&["rejected","cancelled"].includes(s.status)));return <><div className="page-intro"><div><span className="eyebrow">YOUR SKILL EXCHANGES</span><h2>{page==="/swap-requests"?"Requests & invitations":"Exchange history"}</h2><p>{page==="/swap-requests"?"Manage offers you’ve sent and received.":"Follow every exchange, from first hello to completed skill share."}</p></div><span className="result-count">{all.length} exchanges</span></div><div className="tab-strip">{tabs.map(([value,label])=><button key={value} className={tab===value?"active":""} onClick={()=>setTab(value)}>{label}{value!=="all"&&<small>{all.filter(s=>s.status===value||(value==="closed"&&["rejected","cancelled"].includes(s.status))).length}</small>}</button>)}</div>{visible.length?<div className="exchange-list">{visible.map(s=><ExchangeCard key={s.id} swap={s} me={me} page={page} onAction={onAction}/>)}</div>:<Empty icon={ArrowLeftRight} title={all.length?`No ${tab==="closed"?"rejected or cancelled":tab} exchanges`:"No exchanges here yet"} copy={all.length?"Try another status tab to see the rest of your exchange history.":"When you send or receive a request, it will appear here."} action={!all.length&&<Link href="/explore" className="secondary-button">Explore skills <ArrowRight size={15}/></Link>}/>}</>}
+function Swaps({data,me,page,tab,setTab,onAction}){
+ const all=data.swaps||[],tabs=[["all","All"],["pending","Pending"],["accepted","Accepted"],["completed","Completed"],["closed","Rejected / Cancelled"]],visible=all.filter(s=>tab==="all"||s.status===tab||(tab==="closed"&&["rejected","cancelled"].includes(s.status))),panelId=useId();
+ return <>
+  <div className="page-intro"><div><span className="eyebrow">YOUR SKILL EXCHANGES</span><h2>{page==="/swap-requests"?"Requests & invitations":"Exchange history"}</h2><p>{page==="/swap-requests"?"Manage offers you’ve sent and received.":"Follow every exchange, from first hello to completed skill share."}</p></div><span className="result-count">{all.length} exchanges</span></div>
+  <div className="tab-strip" role="tablist" aria-label="Exchange status">
+   {tabs.map(([value,label])=><button key={value} id={`${panelId}-tab-${value}`} type="button" role="tab" aria-selected={tab===value} aria-controls={panelId} className={tab===value?"active":""} onClick={()=>setTab(value)}><span className="tab-label">{label}{value!=="all"&&<small>{all.filter(s=>s.status===value||(value==="closed"&&["rejected","cancelled"].includes(s.status))).length}</small>}</span>{tab===value&&<motion.span layoutId={`${panelId}-active-tab`} className="tab-active-indicator" aria-hidden="true" transition={{duration:0.22,ease:[0.16,1,0.3,1]}}/>}</button>)}
+  </div>
+  <div className="exchange-tab-panel" id={panelId} role="tabpanel" aria-labelledby={`${panelId}-tab-${tab}`}>
+   {visible.length?<div className="exchange-list">{visible.map(s=><ExchangeCard key={s.id} swap={s} me={me} page={page} onAction={onAction}/>)}</div>:<Empty icon={ArrowLeftRight} title={all.length?`No ${tab==="closed"?"rejected or cancelled":tab} exchanges`:"No exchanges here yet"} copy={all.length?"Try another status tab to see the rest of your exchange history.":"When you send or receive a request, it will appear here."} action={!all.length&&<Link href="/explore" className="secondary-button">Explore skills <ArrowRight size={15}/></Link>}/>}
+  </div>
+ </>;
+}
 function ExchangeCard({swap:s,me,onAction}){const incoming=s.receiver_id===me?.id,partnerName=incoming?s.sender_name:s.receiver_name,selfConfirmed=incoming?s.receiver_completed_at:s.sender_completed_at,partnerConfirmed=incoming?s.sender_completed_at:s.receiver_completed_at;return <article className="exchange-card"><div className="exchange-head"><div className="exchange-person"><span className="avatar">{initials(partnerName)}</span><div><b>{partnerName}{s.is_demo&&<i className="demo-tag">Demo</i>}</b><small>{incoming?"Exchange partner · Request received":"Exchange partner · Request sent"} · {new Date(s.created_at).toLocaleDateString()}</small></div></div><Status value={s.status}/></div><div className="swap-summary"><div><small>REQUESTED</small><b>{s.requested_skill}</b></div><ArrowLeftRight size={17}/><div><small>OFFERED</small><b>{s.offered_skill}</b></div></div>{s.message&&<p className="swap-message">“{s.message}”</p>}
  {s.status==="accepted"&&<div className="exchange-next-step"><b>Next step</b><span>Arrange a time to share both skills. Each participant confirms when the exchange is complete.</span></div>}
  {s.status==="accepted"&&<div className="confirmation-progress"><span className={selfConfirmed?"confirmed":""}>{selfConfirmed?<CheckCircle2 size={15}/>:<Clock3 size={15}/>} You {selfConfirmed?"confirmed":"to confirm"}</span><span className={partnerConfirmed?"confirmed":""}>{partnerConfirmed?<CheckCircle2 size={15}/>:<Clock3 size={15}/>} Partner {partnerConfirmed?"confirmed":"to confirm"}</span>{selfConfirmed?<small>Thanks — waiting for your partner.</small>:<button className="secondary-button small-button" onClick={()=>onAction(s.id,"complete")}>Confirm exchange completed <CheckCircle2 size={15}/></button>}</div>}
  {s.status==="completed"&&<div className="exchange-completion"><span>Completed {new Date(s.completed_at).toLocaleDateString()}</span><span className="confirmation-progress compact-confirm"><CheckCircle2 size={15}/> Both participants confirmed</span><span className="credit-earned">+{s.credits_earned||0} credits earned</span></div>}
  {s.status==="pending"&&<div className="exchange-next-step"><b>{incoming?"Your response is needed":"Waiting for a response"}</b><span>{incoming?"Accept the request or decline it.":"The student you contacted has not responded yet."}</span></div>}
- <div className="exchange-actions">{s.status==="pending"&&incoming&&<><button className="secondary-button" onClick={()=>onAction(s.id,"reject")}>Decline</button><button className="primary-button" onClick={()=>onAction(s.id,"accept")}>Accept request <Check size={16}/></button></>}{s.status==="pending"&&!incoming&&<button className="text-link" onClick={()=>onAction(s.id,"cancel")}>Cancel request</button>}{s.status==="completed"&&(s.reviewed_by_me?<span className="review-status">You reviewed this exchange{ s.reviewed_by_partner?" · Partner reviewed":""}</span>:<details className="review-inline"><summary><Star size={15}/> Leave a review</summary><ReviewForm swap={s}/></details>)}</div></article>}function ReviewForm({swap}){const[score,setScore]=useState(5),[comment,setComment]=useState(""),[done,setDone]=useState(false),[err,setErr]=useState("");return done?<p className="success-text">Thanks for sharing your feedback.</p>:<form className="review-form" onSubmit={async e=>{e.preventDefault();setErr("");try{await request("/api/reviews","POST",{swapId:swap.id,rating:score,comment});setDone(true);}catch(x){setErr(x.message);}}}><label>Rating <select value={score} onChange={e=>setScore(Number(e.target.value))}>{[5,4,3,2,1].map(n=><option key={n} value={n}>{n} stars</option>)}</select></label><textarea value={comment} onChange={e=>setComment(e.target.value)} placeholder="A few words about the exchange" maxLength={600}/>{err&&<small className="error-text">{err}</small>}<button className="primary-button small-button">Send review</button></form>;}
+ <div className="exchange-actions">{s.status==="pending"&&incoming&&<><button className="secondary-button" onClick={()=>onAction(s.id,"reject")}>Decline</button><button className="primary-button" onClick={()=>onAction(s.id,"accept")}>Accept request <Check size={16}/></button></>}{s.status==="pending"&&!incoming&&<button className="text-link" onClick={()=>onAction(s.id,"cancel")}>Cancel request</button>}{s.status==="completed"&&(s.reviewed_by_me?<span className="review-status">You reviewed this exchange{ s.reviewed_by_partner?" · Partner reviewed":""}</span>:<ReviewDisclosure swap={s}/>)}</div></article>}function ReviewDisclosure({swap}){const[open,setOpen]=useState(false),panelId=useId(),reduceMotion=useReducedMotion()===true;return <div className="review-inline"><button type="button" className="review-toggle" aria-expanded={open} aria-controls={open?panelId:undefined} onClick={()=>setOpen(value=>!value)}><Star size={15}/> Leave a review</button><AnimatePresence initial={false}>{open&&<motion.div id={panelId} className="review-panel" role="region" aria-label="Leave a review" initial={{opacity:0,y:reduceMotion?0:-6}} animate={{opacity:1,y:0}} exit={{opacity:0,y:reduceMotion?0:-3}} transition={{duration:reduceMotion?0.12:0.18,ease:[0.16,1,0.3,1]}}><ReviewForm swap={swap}/></motion.div>}</AnimatePresence></div>}function ReviewForm({swap}){const[score,setScore]=useState(5),[comment,setComment]=useState(""),[done,setDone]=useState(false),[err,setErr]=useState("");return done?<p className="success-text">Thanks for sharing your feedback.</p>:<form className="review-form" onSubmit={async e=>{e.preventDefault();setErr("");try{await request("/api/reviews","POST",{swapId:swap.id,rating:score,comment});setDone(true);}catch(x){setErr(x.message);}}}><label>Rating <select value={score} onChange={e=>setScore(Number(e.target.value))}>{[5,4,3,2,1].map(n=><option key={n} value={n}>{n} stars</option>)}</select></label><textarea value={comment} onChange={e=>setComment(e.target.value)} placeholder="A few words about the exchange" maxLength={600}/>{err&&<small className="error-text">{err}</small>}<button className="primary-button small-button">Send review</button></form>;}
 
 function Notifications({data,onRead}){return <><div className="page-intro"><div><span className="eyebrow">YOUR ACTIVITY</span><h2>Notifications</h2><p>Updates about requests and exchanges.</p></div>{data.unreadCount>0&&<button className="secondary-button" onClick={()=>onRead(null)}><CheckCheck size={16}/> Mark all read</button>}</div>{data.notifications?.length?<div className="notification-list">{data.notifications.map(n=><article className={`notification-card ${n.read_at?"read":"unread"}`} key={n.id}><span className="notification-icon"><Bell size={17}/></span><div><b>{n.title}</b><p>{n.body}</p><small>{new Date(n.created_at).toLocaleString()}</small></div>{!n.read_at&&<button className="text-link" onClick={()=>onRead(n.id)}>Mark read</button>}{n.related_swap_id&&<Link href="/swap-requests" className="icon-button" aria-label="View request"><ArrowRight size={17}/></Link>}</article>)}</div>:<Empty icon={Bell} title="You’re all caught up" copy="New exchange updates will show up here."/>}</>;}
 
@@ -180,4 +247,48 @@ function Categories({data,error,busy,onRetry,onAdd,onUpdate,onDelete}){
 }
 function AdminSwaps({data}){return data.swaps?.length?<div className="data-list">{data.swaps.map(s=><article className="admin-swap-row" key={s.id}><div className="user-main"><b>{s.sender_name} <ArrowRight size={13}/> {s.receiver_name}</b><span>{s.offered_skill} ⇄ {s.requested_skill}</span><small>{new Date(s.created_at).toLocaleString()}</small></div><Status value={s.status}/></article>)}</div>:<Empty icon={Activity} title="No requests to review" copy="Platform exchange activity will appear here."/>;}
 
-function SkillModal({modal,onClose,onSubmit,data}){const [busy,setBusy]=useState(false);if(!modal)return null;const requestMode=modal.type==="request",editing=modal.type==="editSkill",skill=modal.skill||{};return <div className="modal-backdrop" onMouseDown={onClose}><motion.div className="modal-card" initial={{opacity:0,scale:.96,y:8}} animate={{opacity:1,scale:1,y:0}} onMouseDown={e=>e.stopPropagation()}><button className="icon-button modal-close" onClick={onClose}><X size={19}/></button><span className="eyebrow">{requestMode?"START A SKILL EXCHANGE":"YOUR SKILL PROFILE"}</span><h2>{requestMode?`Request ${skill.name}`:editing?`Edit ${skill.name}`:`${modal.skillType==="offered"?"Add a teaching skill":"Add a learning goal"}`}</h2><p>{requestMode?`Choose a skill you can offer to ${skill.full_name}.`:editing?"Update the details other students see.":"Tell your fellow students what you’d like to teach or learn."}</p><form className="portal-form" onSubmit={async e=>{e.preventDefault();setBusy(true);try{await onSubmit(Object.fromEntries(new FormData(e.currentTarget)));}finally{setBusy(false);}}}>{requestMode?<><div className="swap-summary"><div><small>LEARNING</small><b>{skill.name}</b></div><ArrowLeftRight size={17}/><label><small>OFFERING</small><select name="offeredSkillId" required><option value="">Choose your skill</option>{data.mySkills?.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label></div><label>Personal message <textarea name="message" rows="3" maxLength={500} placeholder="What makes you interested in this exchange?"/></label></>:<><label>Skill name<input name="name" defaultValue={skill.name||""} minLength={2} maxLength={80} required placeholder="e.g. Intro to Python"/></label><label>Category<select name="categoryId" defaultValue={skill.category_id||""}><option value="">Choose a category</option>{data.categories?.map(c=><option value={c.id} key={c.id}>{c.name}</option>)}</select></label><label>Proficiency<select name="level" defaultValue={skill.level||"beginner"}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option><option value="expert">Expert</option></select></label><label>Description<textarea name="description" defaultValue={skill.description||""} maxLength={500} rows="3" placeholder="What can you help someone learn?"/></label><input type="hidden" name="skillType" value={modal.skillType}/></>}<button className="primary-button" disabled={busy}>{busy?"Saving…":requestMode?"Send swap request":editing?"Save changes":"Save skill"} <ArrowRight size={16}/></button></form></motion.div></div>;}
+function SkillModal({modal,onClose,onSubmit,data}){
+ const[busy,setBusy]=useState(false),dialogRef=useRef(null),closeRef=useRef(onClose),titleId=useId(),reduceMotion=useReducedMotion()===true;
+ useEffect(()=>{closeRef.current=onClose;},[onClose]);
+ useEffect(()=>{
+  if(!modal)return;
+  const previousFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
+  const previousOverflow=document.body.style.overflow;
+  const previousRootOverflow=document.documentElement.style.overflow;
+  const presenter=dialogRef.current?.closest(".modal-presenter"),shell=presenter?.parentElement;
+  const background=Array.from(shell?.children||[]).filter(element=>element!==presenter&&!element.classList.contains("modal-backdrop"));
+  const inertState=background.map(element=>[element,element.hasAttribute("inert")]);
+  const frame=requestAnimationFrame(()=>{const dialog=dialogRef.current,target=dialog?.querySelector('form input:not([type="hidden"]),form select,form textarea')||dialog?.querySelector(".modal-close");target?.focus({preventScroll:true});});
+  document.body.style.overflow="hidden";
+  document.documentElement.style.overflow="hidden";
+  background.forEach(element=>element.setAttribute("inert",""));
+  function handleKeyDown(event){
+   if(event.key==="Escape"){event.preventDefault();closeRef.current();return;}
+   if(event.key!=="Tab")return;
+   const dialog=dialogRef.current;
+   const items=Array.from(dialog?.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')||[]).filter(item=>item.getClientRects().length>0);
+   if(!items.length){event.preventDefault();dialog?.focus();return;}
+   const first=items[0],last=items.at(-1),outside=!dialog?.contains(document.activeElement);
+   if(event.shiftKey&&(document.activeElement===first||outside)){event.preventDefault();last.focus();}
+   else if(!event.shiftKey&&(document.activeElement===last||outside)){event.preventDefault();first.focus();}
+  }
+  document.addEventListener("keydown",handleKeyDown);
+  return()=>{cancelAnimationFrame(frame);document.removeEventListener("keydown",handleKeyDown);document.body.style.overflow=previousOverflow;document.documentElement.style.overflow=previousRootOverflow;inertState.forEach(([element,wasInert])=>{if(!wasInert)element.removeAttribute("inert");});if(previousFocus?.isConnected)requestAnimationFrame(()=>previousFocus.focus({preventScroll:true}));};
+ },[modal]);
+ const requestMode=modal?.type==="request",editing=modal?.type==="editSkill",skill=modal?.skill||{};
+ return <AnimatePresence initial={false}>{modal?[
+  <motion.div key="skill-modal-backdrop" className="modal-backdrop" aria-hidden="true" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} transition={{duration:reduceMotion?0.12:0.18,ease:[0.16,1,0.3,1]}} onMouseDown={event=>{if(event.target===event.currentTarget)onClose();}}/>,
+  <motion.div key={`skill-modal-presenter-${modal.type}`} className="modal-presenter" initial={{opacity:0,y:reduceMotion?0:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:reduceMotion?0:6,transition:{duration:reduceMotion?0.12:0.16,ease:[0.7,0,.84,0]}}} transition={{duration:reduceMotion?0.12:0.2,ease:[0.16,1,0.3,1]}}>
+  <div ref={dialogRef} className="modal-card" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+   <button type="button" className="icon-button modal-close" aria-label="Close dialog" onClick={onClose}><X size={19}/></button>
+   <span className="eyebrow">{requestMode?"START A SKILL EXCHANGE":"YOUR SKILL PROFILE"}</span>
+   <h2 id={titleId}>{requestMode?`Request ${skill.name}`:editing?`Edit ${skill.name}`:`${modal.skillType==="offered"?"Add a teaching skill":"Add a learning goal"}`}</h2>
+   <p>{requestMode?`Choose a skill you can offer to ${skill.full_name}.`:editing?"Update the details other students see.":"Tell your fellow students what you’d like to teach or learn."}</p>
+   <form className="portal-form" onSubmit={async e=>{e.preventDefault();setBusy(true);try{await onSubmit(Object.fromEntries(new FormData(e.currentTarget)));}finally{setBusy(false);}}}>
+    {requestMode?<><div className="swap-summary"><div><small>LEARNING</small><b>{skill.name}</b></div><ArrowLeftRight size={17}/><label><small>OFFERING</small><select name="offeredSkillId" required><option value="">Choose your skill</option>{data.mySkills?.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label></div><label>Personal message <textarea name="message" rows="3" maxLength="500" placeholder="What makes you interested in this exchange?"/></label></>:<><label>Skill name<input name="name" defaultValue={skill.name||""} minLength={2} maxLength={80} required placeholder="e.g. Intro to Python"/></label><label>Category<select name="categoryId" defaultValue={skill.category_id||""}><option value="">Choose a category</option>{data.categories?.map(c=><option value={c.id} key={c.id}>{c.name}</option>)}</select></label><label>Proficiency<select name="level" defaultValue={skill.level||"beginner"}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option><option value="expert">Expert</option></select></label><label>Description<textarea name="description" defaultValue={skill.description||""} maxLength="500" rows="3" placeholder="What can you help someone learn?"/></label><input type="hidden" name="skillType" value={modal.skillType}/></>}
+    <button className="primary-button" disabled={busy}>{busy?"Saving…":requestMode?"Send swap request":editing?"Save changes":"Save skill"} <ArrowRight size={16}/></button>
+   </form>
+  </div>
+  </motion.div>,
+ ]:null}</AnimatePresence>;
+}
