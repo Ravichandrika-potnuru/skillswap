@@ -1,0 +1,4 @@
+import { query } from "@/lib/db";
+import { requireUser } from "@/lib/auth";
+import { fail,json } from "@/lib/http";
+export async function GET(){const auth=await requireUser({admin:true});if(auth.error)return fail(auth.error,auth.status);const {rows}=await query("SELECT (SELECT COUNT(*) FROM users WHERE role='student')::int AS total_students,(SELECT COUNT(*) FROM skills WHERE skill_type='offered' AND is_active)::int AS active_skills,(SELECT COUNT(*) FROM swap_requests)::int AS total_swaps,(SELECT COUNT(*) FROM swap_requests WHERE status='completed')::int AS completed_exchanges,(SELECT COUNT(*) FROM swap_requests WHERE status='pending')::int AS pending_requests,(SELECT COUNT(*) FROM users WHERE role='student' AND account_status='pending')::int AS pending_accounts");return json({stats:rows[0]});}

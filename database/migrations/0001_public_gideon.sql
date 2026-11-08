@@ -1,0 +1,1 @@
+CREATE OR REPLACE VIEW "public"."users" AS (select "id", "email", "role", "account_status", "email_verified_at", "full_name", "student_id", "department", "academic_year", "bio", "created_at", "updated_at", "reviewed_by", "reviewed_at", "status_note" from "profiles");

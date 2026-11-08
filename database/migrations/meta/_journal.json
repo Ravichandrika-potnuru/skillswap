@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1794118449537,
+      "tag": "0000_warm_triton",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794120009884,
+      "tag": "0001_public_gideon",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794128396405,
+      "tag": "0002_credits_demo_community",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794128429451,
+      "tag": "0003_credit_activity_pair_constraint",
+      "breakpoints": true
+    }
+  ]
+}
