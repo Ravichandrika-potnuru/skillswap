@@ -16,3 +16,5 @@ coverage/
 *.sql.gz
 *.sqlite
 *.sqlite3
+
+.vercel
