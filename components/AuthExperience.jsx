@@ -45,7 +45,10 @@ export default function AuthExperience({initialMode="login"}){
         setCharacterFeedback("success");await new Promise((resolve)=>window.setTimeout(resolve,140));location.assign(out.user.role==="admin"?"/admin":out.user.account_status==="approved"?"/dashboard":"/pending");return;
       }
       if(mode==="register"){
-        const result=await authClient.signUp.email({email:String(data.email||"").trim().toLowerCase(),password:String(data.password||""),name:String(data.fullName||"").trim()});
+        const password=String(data.password||"");
+        if(password.length<10)throw new Error("Choose a password with at least 10 characters.");
+        if(password!==String(data.confirmPassword||""))throw new Error("Your passwords do not match.");
+        const result=await authClient.signUp.email({email:String(data.email||"").trim().toLowerCase(),password,name:String(data.fullName||"").trim()});
         if(result.error)throw new Error(result.error.message||"Unable to create your account.");
         const response=await fetch("/api/auth/profile",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({fullName:data.fullName,studentId:data.studentId,department:data.department,academicYear:data.academicYear,bio:data.bio})});
         const out=await response.json();if(!response.ok)throw new Error(out.error||"Your sign-in was created, but your SkillSwap profile could not be completed.");
@@ -83,6 +86,8 @@ export default function AuthExperience({initialMode="login"}){
           {mode==="register"&&<>
             <label className="field"><span>Full name</span><span className="input-wrap"><UserRound size={17}/><input name="fullName" autoComplete="name" placeholder="Your full name" required minLength={2}/></span></label>
             <label className="field"><span>Student email</span><span className="input-wrap"><Mail size={17}/><input name="email" type="email" autoComplete="email" placeholder="you@college.edu" required/></span></label>
+            <label className="field"><span>Create password</span><span className="input-wrap"><LockKeyhole size={17}/><input name="password" type={showPassword?"text":"password"} autoComplete="new-password" placeholder="At least 10 characters" minLength={10} required/><button className="icon-button eye-button" type="button" aria-label={showPassword?"Hide password":"Show password"} onMouseDown={(event)=>event.preventDefault()} onClick={()=>setShowPassword((visible)=>!visible)}>{showPassword?<EyeOff size={18}/>:<Eye size={18}/>}</button></span></label>
+            <label className="field"><span>Confirm password</span><span className="input-wrap"><LockKeyhole size={17}/><input name="confirmPassword" type={showPassword?"text":"password"} autoComplete="new-password" placeholder="Enter your password again" minLength={10} required/><button className="icon-button eye-button" type="button" aria-label={showPassword?"Hide password":"Show password"} onMouseDown={(event)=>event.preventDefault()} onClick={()=>setShowPassword((visible)=>!visible)}>{showPassword?<EyeOff size={18}/>:<Eye size={18}/>}</button></span></label>
             <div className="form-row"><label className="field"><span>Department</span><input className="bare-input" name="department" placeholder="e.g. Computer Science" required/></label><label className="field"><span>Academic year</span><select name="academicYear" defaultValue="" required><option value="" disabled>Select year</option><option>Year 1</option><option>Year 2</option><option>Year 3</option><option>Year 4</option><option>Graduate</option><option>Other</option></select></label></div>
             <label className="field"><span>Student ID <small>Optional</small></span><input className="bare-input" name="studentId" placeholder="For administrator reference"/></label>
             <label className="field"><span>Short bio <small>Optional</small></span><textarea name="bio" rows="2" maxLength="600" placeholder="What are you excited to learn or share?"/></label>
